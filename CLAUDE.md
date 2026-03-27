@@ -139,11 +139,8 @@ Replicate completes (30-90 seconds)
 - [x] Migration: ar_sessions table (003_schema_expansions.sql)
 - [x] TypeScript types for new tables (BrandKit, ExportPreset, ArSession)
 
-#### Post-Phase-1 Merge Notes
-After Phase 1 branch merges to main, rebase `phase-2/schema-expansions` onto main:
-1. `src/types/database.ts` — Phase 1 may modify GenerationJob fields; Phase 2 appends new interfaces at end. Keep both.
-2. `CLAUDE.md` — minor checkbox conflict. Keep both Phase 1 and Phase 2 updates.
-3. Migration numbering is safe: 002 = Phase 1, 003 = Phase 2 (no collision).
+#### Post-Phase-1 Merge Notes — RESOLVED ✅
+Phase 1 merged to main. Rebase clean — no conflicts. Migrations 002 + 003 coexist, types compile cleanly.
 
 ### Phase 3: Admin Dashboard ✅ → ☐
 - [ ] Admin layout + auth guard
