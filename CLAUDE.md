@@ -131,13 +131,19 @@ Replicate completes (30-90 seconds)
 - [x] Parallel image uploads (Promise.all)
 - [x] Pipeline step progress (generation_queue.current_step + Supabase Realtime)
 
-### Phase 2: Schema Expansions ✅ → ☐
-- [ ] Migration: credits_expires_at on users
-- [ ] Migration: current_step + current_step_label on generation_queue
-- [ ] Migration: brand_kits table
-- [ ] Migration: export_presets table
-- [ ] Migration: ar_sessions table (for AR Try-On tracking)
-- [ ] TypeScript types for new tables
+### Phase 2: Schema Expansions ✅
+- [x] Migration: credits_expires_at on users (done in 002_async_pipeline.sql — Phase 1)
+- [x] Migration: current_step + current_step_label on generation_queue (done in 002_async_pipeline.sql — Phase 1)
+- [x] Migration: brand_kits table (003_schema_expansions.sql)
+- [x] Migration: export_presets table (003_schema_expansions.sql)
+- [x] Migration: ar_sessions table (003_schema_expansions.sql)
+- [x] TypeScript types for new tables (BrandKit, ExportPreset, ArSession)
+
+#### Post-Phase-1 Merge Notes
+After Phase 1 branch merges to main, rebase `phase-2/schema-expansions` onto main:
+1. `src/types/database.ts` — Phase 1 may modify GenerationJob fields; Phase 2 appends new interfaces at end. Keep both.
+2. `CLAUDE.md` — minor checkbox conflict. Keep both Phase 1 and Phase 2 updates.
+3. Migration numbering is safe: 002 = Phase 1, 003 = Phase 2 (no collision).
 
 ### Phase 3: Admin Dashboard ✅ → ☐
 - [ ] Admin layout + auth guard
