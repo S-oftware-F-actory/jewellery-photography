@@ -7,11 +7,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { createClient } from "@/lib/supabase/client";
-import type { Project } from "@/types/database";
+import { getSignedUrls } from "@/lib/storage";
+import type { Project, SourceImage } from "@/types/database";
 
 export default function DashboardPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [credits, setCredits] = useState(0);
+  const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -36,6 +38,29 @@ export default function DashboardPage() {
           .eq("id", user.id)
           .single();
         if (userData) setCredits(userData.credits_remaining);
+      }
+
+      // Load first source image for each project as thumbnail
+      if (projectData && projectData.length > 0) {
+        const projectIds = projectData.map((p) => p.id);
+        const { data: sourceImages } = await supabase
+          .from("source_images")
+          .select("project_id, storage_path")
+          .in("project_id", projectIds)
+          .eq("order", 0);
+
+        if (sourceImages && sourceImages.length > 0) {
+          const paths = sourceImages.map((img) => img.storage_path);
+          const urls = await getSignedUrls("raw-uploads", paths);
+
+          const thumbMap: Record<string, string> = {};
+          for (const img of sourceImages) {
+            if (urls[img.storage_path]) {
+              thumbMap[img.project_id] = urls[img.storage_path];
+            }
+          }
+          setThumbnails(thumbMap);
+        }
       }
 
       setLoading(false);
@@ -85,7 +110,7 @@ export default function DashboardPage() {
           <CardContent>
             <div className="text-2xl font-bold">{credits}</div>
             <Link href="/credits" className="text-xs text-muted-foreground hover:text-primary">
-              Buy more credits <ArrowRight className="inline h-3 w-3" />
+              Manage credits <ArrowRight className="inline h-3 w-3" />
             </Link>
           </CardContent>
         </Card>
@@ -136,8 +161,22 @@ export default function DashboardPage() {
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {projects.map((project) => (
               <Link key={project.id} href={`/project/${project.id}`}>
-                <Card className="hover:shadow-md transition-shadow cursor-pointer h-full">
-                  <CardHeader>
+                <Card className="hover:shadow-md transition-shadow cursor-pointer h-full overflow-hidden">
+                  <div className="aspect-[16/9] bg-muted relative">
+                    {thumbnails[project.id] ? (
+                      <img
+                        src={thumbnails[project.id]}
+                        alt={project.name}
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <Images className="h-8 w-8 text-muted-foreground/30" />
+                      </div>
+                    )}
+                  </div>
+                  <CardHeader className="pb-2">
                     <div className="flex items-center justify-between">
                       <CardTitle className="text-base">{project.name}</CardTitle>
                       <Badge variant={statusColor(project.status)}>{project.status}</Badge>
@@ -146,7 +185,7 @@ export default function DashboardPage() {
                       {project.jewellery_type}
                     </CardDescription>
                   </CardHeader>
-                  <CardContent>
+                  <CardContent className="pt-0">
                     <div className="flex items-center gap-4 text-sm text-muted-foreground">
                       <span>{project.source_image_count} source</span>
                       <span>{project.generated_image_count} generated</span>

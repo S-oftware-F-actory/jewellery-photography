@@ -145,13 +145,13 @@ Replicate completes (30-90 seconds)
 - [ ] Generation monitoring page (list, filter by status/type, retry failed)
 - [ ] Manual credit add/remove with audit log
 
-### Phase 4: Core UX Polish ✅ → ☐
-- [ ] Dashboard with shadcn/ui Cards (stats, recent projects)
-- [ ] Credits page "Coming Soon" placeholder
-- [ ] Generation progress UI (step-by-step with Realtime)
-- [ ] Gallery with actual images (not placeholders)
-- [ ] Download individual images + ZIP download
-- [ ] Before/After comparison slider
+### Phase 4: Core UX Polish ✅
+- [x] Dashboard with shadcn/ui Cards (stats, recent projects, thumbnail previews via signed URLs)
+- [x] Credits page "Coming Soon" placeholder (payment buttons disabled, contact CTA)
+- [x] Generation progress UI (step-by-step with Realtime, completion/failure states, toast notifications)
+- [x] Gallery with actual images (signed URLs from Supabase Storage, working lightbox)
+- [x] Download individual images + ZIP download (archiver-based /api/download/[projectId])
+- [x] Before/After comparison slider (drag-to-compare component on product shots)
 
 ### Phase 5: Brand Kit + Social Export ✅ → ☐
 - [ ] Brand Kit settings page (logo upload, color picker, watermark toggle)

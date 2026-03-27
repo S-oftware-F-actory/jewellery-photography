@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, CreditCard, Loader2, Sparkles } from "lucide-react";
+import { Check, Clock, CreditCard, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -37,7 +37,6 @@ const creditPacks = [
 
 export default function CreditsPage() {
   const [credits, setCredits] = useState(0);
-  const [purchasing, setPurchasing] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -57,28 +56,11 @@ export default function CreditsPage() {
     loadCredits();
   }, []);
 
-  const handlePurchase = async (packId: string) => {
-    setPurchasing(packId);
-    try {
-      const response = await fetch("/api/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ packId }),
-      });
-      const { url } = await response.json();
-      if (url) window.location.href = url;
-    } catch (error) {
-      console.error("Checkout error:", error);
-    } finally {
-      setPurchasing(null);
-    }
-  };
-
   return (
     <div className="space-y-8">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Credits</h1>
-        <p className="text-muted-foreground">Purchase credits to generate jewellery images</p>
+        <p className="text-muted-foreground">Manage your credits for generating jewellery images</p>
       </div>
 
       {/* Current Balance */}
@@ -104,12 +86,27 @@ export default function CreditsPage() {
         </div>
       </div>
 
-      {/* Packs */}
+      {/* Coming Soon Banner */}
+      <Card className="border-dashed border-primary/30 bg-primary/5">
+        <CardContent className="flex items-center gap-4 py-6">
+          <div className="rounded-full bg-primary/10 p-3">
+            <Clock className="h-6 w-6 text-primary" />
+          </div>
+          <div>
+            <div className="font-semibold">Online Payments Coming Soon</div>
+            <div className="text-sm text-muted-foreground">
+              Contact us to purchase credits manually. Self-service payment will be available soon.
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Packs (preview only) */}
       <div className="grid gap-6 md:grid-cols-3">
         {creditPacks.map((pack) => (
           <Card
             key={pack.id}
-            className={pack.popular ? "border-primary ring-1 ring-primary" : ""}
+            className={`relative ${pack.popular ? "border-primary ring-1 ring-primary" : ""}`}
           >
             <CardHeader>
               {pack.popular && (
@@ -136,13 +133,9 @@ export default function CreditsPage() {
               <Button
                 className="w-full"
                 variant={pack.popular ? "default" : "outline"}
-                onClick={() => handlePurchase(pack.id)}
-                disabled={purchasing !== null}
+                disabled
               >
-                {purchasing === pack.id ? (
-                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                ) : null}
-                Buy {pack.name}
+                Coming Soon
               </Button>
             </CardContent>
           </Card>
