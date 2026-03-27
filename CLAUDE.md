@@ -159,11 +159,14 @@ Replicate completes (30-90 seconds)
 - [ ] Social export presets (crop/resize to platform dimensions)
 - [ ] Export UI on gallery page
 
-### Phase 6: 3D + Embed + AR ✅ → ☐
-- [ ] 3D viewer page with model-viewer
-- [ ] Embed code generator UI
-- [ ] Public embed page
-- [ ] AR Try-On (WebXR) — ring/necklace/earring placement
+### Phase 6: 3D + Embed + AR ✅
+- [x] 3D viewer page with model-viewer (dashboard page with live config controls: bg color, rotation, lighting)
+- [x] Embed code generator UI (iframe snippet dialog with copy-to-clipboard, configurable dimensions)
+- [x] Public embed page (already existed from Phase 1, now wired to configurable embed_configs)
+- [x] AR "View in Your Space" (model-viewer built-in AR with WebXR/Scene Viewer, session tracking, Beta badge)
+- [x] Viewer controls panel (color picker, rotation speed slider, lighting presets)
+- [x] useEmbedConfig hook (fetch/create/update with debounced writes)
+- [x] Project detail 3D tab wired up (View 3D, Get Embed Code, Download GLB all functional)
 
 ### Phase 7: Logging, Rate Limiting, Polish ✅ → ☐
 - [ ] Structured logging on all API routes
