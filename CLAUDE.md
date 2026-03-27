@@ -171,7 +171,7 @@ Phase 1 merged to main. Rebase clean — no conflicts. Migrations 002 + 003 coex
 - [x] Download individual images + ZIP download (archiver-based /api/download/[projectId])
 - [x] Before/After comparison slider (drag-to-compare component on product shots)
 
-### Phase 5: Brand Kit + Social Export ✅ → ☐
+### Phase 5: Brand Kit + Social Export ☐
 - [ ] Brand Kit settings page (logo upload, color picker, watermark toggle)
 - [ ] Auto-watermark on generated images
 - [ ] Social export presets (crop/resize to platform dimensions)
@@ -186,7 +186,7 @@ Phase 1 merged to main. Rebase clean — no conflicts. Migrations 002 + 003 coex
 - [x] useEmbedConfig hook (fetch/create/update with debounced writes)
 - [x] Project detail 3D tab wired up (View 3D, Get Embed Code, Download GLB all functional)
 
-### Phase 7: Logging, Rate Limiting, Polish ✅ → ☐
+### Phase 7: Logging, Rate Limiting, Polish ☐
 - [ ] Structured logging on all API routes
 - [ ] Rate limiting (/api/generate, /api/embed)
 - [ ] Mobile responsive pass
