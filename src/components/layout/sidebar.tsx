@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -10,6 +11,7 @@ import {
   Diamond,
   Images,
   LogOut,
+  Shield,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
@@ -22,9 +24,21 @@ const navigation = [
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 
+const ADMIN_EMAILS = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
+
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (user?.email && ADMIN_EMAILS.includes(user.email.toLowerCase())) {
+        setIsAdmin(true);
+      }
+    });
+  }, []);
 
   const handleSignOut = async () => {
     const supabase = createClient();
@@ -64,6 +78,24 @@ export function Sidebar() {
                 ))}
               </ul>
             </li>
+
+            {/* Admin link */}
+            {isAdmin && (
+              <li>
+                <Link
+                  href="/admin"
+                  className={cn(
+                    "group flex gap-x-3 rounded-lg p-2.5 text-sm font-medium leading-6 transition-colors",
+                    pathname.startsWith("/admin")
+                      ? "bg-destructive text-destructive-foreground"
+                      : "text-destructive/70 hover:bg-destructive/10 hover:text-destructive"
+                  )}
+                >
+                  <Shield className="h-5 w-5 shrink-0" />
+                  Admin Panel
+                </Link>
+              </li>
+            )}
 
             {/* Recent projects placeholder */}
             <li>

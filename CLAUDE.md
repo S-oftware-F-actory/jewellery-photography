@@ -142,11 +142,26 @@ Replicate completes (30-90 seconds)
 #### Post-Phase-1 Merge Notes — RESOLVED ✅
 Phase 1 merged to main. Rebase clean — no conflicts. Migrations 002 + 003 coexist, types compile cleanly.
 
-### Phase 3: Admin Dashboard ✅ → ☐
-- [ ] Admin layout + auth guard
-- [ ] User management page (list, search, credit adjustment)
-- [ ] Generation monitoring page (list, filter by status/type, retry failed)
-- [ ] Manual credit add/remove with audit log
+### Phase 3: Admin Dashboard ✅
+- [x] Admin auth guard (ADMIN_EMAILS env var, server-side check in layout)
+- [x] Admin layout + sidebar (separate from dashboard sidebar, Shield branding)
+- [x] Admin overview page (stats cards: users, credits, generations, failures)
+- [x] User management page (list, search, credit adjustment dialog with audit trail)
+- [x] Generation monitoring page (list, filter by status/type, error details panel)
+- [x] Manual credit add/remove with audit log (purchases table, logged to console)
+- [x] Admin API routes: /api/admin/users, /api/admin/generations, /api/admin/credits
+- [x] Admin link in main sidebar (conditionally shown for admin users)
+
+#### Admin Auth Setup
+- Set `ADMIN_EMAILS` env var (comma-separated) for server-side admin checks
+- Set `NEXT_PUBLIC_ADMIN_EMAILS` for client-side sidebar visibility
+- Admin layout at `/admin` redirects non-admin users to `/dashboard`
+
+#### Post-Phase-1 Dependencies & Overlap Notes
+- **Phase 2 migrations must run in Supabase** before Phase 3 admin can query brand_kits/export_presets/ar_sessions. The core tables (users, projects, generation_queue, generated_images) already exist from Phase 1.
+- **Phase 4 and Phase 5 have minor overlap**: Phase 4 builds the gallery UI, Phase 5 adds export buttons to it. If running Phase 5 in a separate session, include the brand_kits + export_presets migration setup at the start.
+- **Phase 5 can run independently** as a fourth session — just ensure the Phase 2 brand_kits and export_presets tables exist (either run the migration or include it in Phase 5 work).
+- **Phase 3 admin monitoring works best** after some generations have been created (Phase 4 polish helps with that flow).
 
 ### Phase 4: Core UX Polish ✅ → ☐
 - [ ] Dashboard with shadcn/ui Cards (stats, recent projects)
