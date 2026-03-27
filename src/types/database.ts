@@ -11,6 +11,7 @@ export interface User {
   name: string | null;
   store_name: string | null;
   credits_remaining: number;
+  credits_expires_at: string | null;
   plan_tier: PlanTier;
   avatar_url: string | null;
   created_at: string;
@@ -77,6 +78,9 @@ export interface GenerationJob {
   project_id: string;
   type: GenerationType;
   status: GenerationStatus;
+  current_step: number;
+  current_step_label: string;
+  total_steps: number;
   replicate_prediction_id: string | null;
   started_at: string | null;
   completed_at: string | null;

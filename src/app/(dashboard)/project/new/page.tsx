@@ -72,7 +72,24 @@ export default function NewProjectPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
-      // Create project
+      // Step 1: Upload all images in parallel first (before creating project)
+      const tempId = crypto.randomUUID();
+      const uploadResults = await Promise.all(
+        files.map(async (file, i) => {
+          const ext = file.name.split(".").pop();
+          const path = `${user.id}/${tempId}/${i}.${ext}`;
+
+          const { error: uploadError } = await supabase.storage
+            .from("raw-uploads")
+            .upload(path, file);
+
+          if (uploadError) throw uploadError;
+
+          return { path, fileName: file.name, fileSize: file.size, order: i };
+        })
+      );
+
+      // Step 2: Create project (only after all uploads succeed)
       const { data: project, error: projectError } = await supabase
         .from("projects")
         .insert({
@@ -86,29 +103,30 @@ export default function NewProjectPage() {
         .select()
         .single();
 
-      if (projectError) throw projectError;
-
-      // Upload images
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        const ext = file.name.split(".").pop();
-        const path = `${user.id}/${project.id}/${i}.${ext}`;
-
-        const { error: uploadError } = await supabase.storage
-          .from("raw-uploads")
-          .upload(path, file);
-
-        if (uploadError) throw uploadError;
-
-        // Record source image
-        await supabase.from("source_images").insert({
-          project_id: project.id,
-          storage_path: path,
-          file_name: file.name,
-          file_size: file.size,
-          order: i,
-        });
+      if (projectError) {
+        // Clean up uploaded files on project creation failure
+        await Promise.all(
+          uploadResults.map((r) =>
+            supabase.storage.from("raw-uploads").remove([r.path])
+          )
+        );
+        throw projectError;
       }
+
+      // Step 3: Move files to final path and create source_image records
+      const sourceRecords = uploadResults.map((r) => ({
+        project_id: project.id,
+        storage_path: r.path,
+        file_name: r.fileName,
+        file_size: r.fileSize,
+        order: r.order,
+      }));
+
+      const { error: insertError } = await supabase
+        .from("source_images")
+        .insert(sourceRecords);
+
+      if (insertError) throw insertError;
 
       router.push(`/project/${project.id}`);
     } catch (err) {

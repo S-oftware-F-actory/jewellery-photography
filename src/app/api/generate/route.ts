@@ -1,12 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import {
-  removeBackground,
-  generateProductShot,
-  generateModelShot,
-  generate3DModel,
-  upscaleImage,
-} from "@/lib/replicate";
+import { createPrediction, MODELS } from "@/lib/replicate";
 import type { GenerationType, JewelleryType, ModelPlacement } from "@/types/database";
 
 const JEWELLERY_PLACEMENTS: Record<JewelleryType, ModelPlacement[]> = {
@@ -25,34 +19,73 @@ const CREDIT_COSTS: Record<GenerationType, number> = {
   "3d_model": 5,
 };
 
+// Pipeline step definitions for progress tracking
+const PIPELINE_STEPS: Record<GenerationType, { total: number; labels: string[] }> = {
+  product_shot: {
+    total: 4,
+    labels: [
+      "Removing background...",
+      "Generating product shot...",
+      "Enhancing quality...",
+      "Saving to gallery...",
+    ],
+  },
+  model_shot: {
+    total: 4,
+    labels: [
+      "Removing background...",
+      "Generating model shot...",
+      "Enhancing quality...",
+      "Saving to gallery...",
+    ],
+  },
+  "3d_model": {
+    total: 2,
+    labels: [
+      "Reconstructing 3D model...",
+      "Saving to gallery...",
+    ],
+  },
+};
+
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
 
     // Auth check
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { projectId, type } = (await request.json()) as {
+    const body = await request.json();
+    const { projectId, type } = body as {
       projectId: string;
       type: GenerationType;
     };
 
-    // Check credits
-    const { data: userData } = await supabase
-      .from("users")
-      .select("credits_remaining")
-      .eq("id", user.id)
-      .single();
-
+    // Validate generation type
     const cost = CREDIT_COSTS[type];
-    if (!userData || userData.credits_remaining < cost) {
-      return NextResponse.json({ error: "Insufficient credits" }, { status: 402 });
+    if (cost === undefined) {
+      return NextResponse.json({ error: "Invalid generation type" }, { status: 400 });
     }
 
-    // Get project with source images
+    // Atomic credit deduction — prevents race conditions
+    const { data: deducted, error: deductError } = await supabase.rpc(
+      "deduct_credits",
+      { p_user_id: user.id, p_amount: cost }
+    );
+
+    if (deductError || !deducted) {
+      return NextResponse.json(
+        { error: "Insufficient credits" },
+        { status: 402 }
+      );
+    }
+
+    // Get project (ownership check via RLS)
     const { data: project } = await supabase
       .from("projects")
       .select("*")
@@ -61,9 +94,15 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (!project) {
+      // Refund credits if project not found
+      await supabase.rpc("add_credits", {
+        p_user_id: user.id,
+        p_amount: cost,
+      });
       return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
 
+    // Get source images
     const { data: sourceImages } = await supabase
       .from("source_images")
       .select("*")
@@ -72,21 +111,65 @@ export async function POST(request: NextRequest) {
       .limit(1);
 
     if (!sourceImages || sourceImages.length === 0) {
+      await supabase.rpc("add_credits", {
+        p_user_id: user.id,
+        p_amount: cost,
+      });
       return NextResponse.json({ error: "No source images" }, { status: 400 });
     }
 
-    // Get signed URL for first source image
+    // Get signed URL for source image
     const { data: signedUrl } = await supabase.storage
       .from("raw-uploads")
       .createSignedUrl(sourceImages[0].storage_path, 3600);
 
     if (!signedUrl?.signedUrl) {
-      return NextResponse.json({ error: "Failed to access source image" }, { status: 500 });
+      await supabase.rpc("add_credits", {
+        p_user_id: user.id,
+        p_amount: cost,
+      });
+      return NextResponse.json(
+        { error: "Something went wrong" },
+        { status: 500 }
+      );
     }
 
     const imageUrl = signedUrl.signedUrl;
+    const placement =
+      type === "model_shot"
+        ? JEWELLERY_PLACEMENTS[project.jewellery_type as JewelleryType]?.[0] ||
+          "hand"
+        : null;
 
-    // Create generation record
+    const steps = PIPELINE_STEPS[type];
+
+    // Create generation queue entry with step tracking
+    const { data: queueEntry, error: queueError } = await supabase
+      .from("generation_queue")
+      .insert({
+        project_id: projectId,
+        type,
+        status: "pending",
+        current_step: 1,
+        current_step_label: steps.labels[0],
+        total_steps: steps.total,
+      })
+      .select()
+      .single();
+
+    if (queueError) {
+      console.error("[generate] Queue insert failed:", queueError);
+      await supabase.rpc("add_credits", {
+        p_user_id: user.id,
+        p_amount: cost,
+      });
+      return NextResponse.json(
+        { error: "Something went wrong" },
+        { status: 500 }
+      );
+    }
+
+    // Create generated_images record
     const { data: generation, error: genError } = await supabase
       .from("generated_images")
       .insert({
@@ -95,99 +178,125 @@ export async function POST(request: NextRequest) {
         storage_path: "",
         status: "processing",
         credits_cost: cost,
-        model_placement: type === "model_shot"
-          ? (JEWELLERY_PLACEMENTS[project.jewellery_type as JewelleryType]?.[0] || "hand")
-          : null,
+        model_placement: placement,
       })
       .select()
       .single();
 
-    if (genError) throw genError;
-
-    // Deduct credits
-    await supabase
-      .from("users")
-      .update({ credits_remaining: userData.credits_remaining - cost })
-      .eq("id", user.id);
-
-    // Run AI pipeline (async — in production, use webhooks)
-    let result;
-    switch (type) {
-      case "product_shot": {
-        // Step 1: Remove background
-        const bgRemoved = await removeBackground(imageUrl);
-        if (!bgRemoved.success) throw new Error(bgRemoved.error);
-
-        // Step 2: Generate product shot
-        result = await generateProductShot(
-          bgRemoved.output as string,
-          project.jewellery_type
-        );
-        break;
-      }
-      case "model_shot": {
-        const bgRemoved = await removeBackground(imageUrl);
-        if (!bgRemoved.success) throw new Error(bgRemoved.error);
-
-        const placement = JEWELLERY_PLACEMENTS[project.jewellery_type as JewelleryType]?.[0] || "hand";
-        result = await generateModelShot(
-          bgRemoved.output as string,
-          project.jewellery_type,
-          placement
-        );
-        break;
-      }
-      case "3d_model": {
-        result = await generate3DModel(imageUrl);
-        break;
-      }
+    if (genError) {
+      console.error("[generate] Image record insert failed:", genError);
+      await supabase.rpc("add_credits", {
+        p_user_id: user.id,
+        p_amount: cost,
+      });
+      return NextResponse.json(
+        { error: "Something went wrong" },
+        { status: 500 }
+      );
     }
 
-    if (!result?.success) {
-      // Refund credits on failure
+    // Build webhook URL with metadata
+    const webhookUrl = new URL("/api/webhook", process.env.NEXT_PUBLIC_APP_URL!);
+    webhookUrl.searchParams.set("queue_id", queueEntry.id);
+    webhookUrl.searchParams.set("generation_id", generation.id);
+    webhookUrl.searchParams.set("project_id", projectId);
+    webhookUrl.searchParams.set("type", type);
+    webhookUrl.searchParams.set("user_id", user.id);
+    webhookUrl.searchParams.set("credits_cost", String(cost));
+    if (placement) webhookUrl.searchParams.set("placement", placement);
+
+    // Determine which model and input to use for step 1
+    let model: string;
+    let input: Record<string, unknown>;
+
+    switch (type) {
+      case "product_shot":
+      case "model_shot":
+        // Step 1 for both: remove background first
+        model = MODELS.REMBG;
+        input = { image: imageUrl };
+        break;
+      case "3d_model":
+        model = MODELS.TRIPOSR;
+        input = { image: imageUrl, output_format: "glb" };
+        break;
+      default:
+        model = MODELS.REMBG;
+        input = { image: imageUrl };
+    }
+
+    // Create async prediction on Replicate
+    try {
+      const prediction = await createPrediction(
+        model,
+        input,
+        webhookUrl.toString()
+      );
+
+      // Update queue with prediction ID
       await supabase
-        .from("users")
-        .update({ credits_remaining: userData.credits_remaining })
-        .eq("id", user.id);
+        .from("generation_queue")
+        .update({
+          status: "processing",
+          replicate_prediction_id: prediction.id,
+          started_at: new Date().toISOString(),
+        })
+        .eq("id", queueEntry.id);
+
+      // Update generation record with prediction ID
+      await supabase
+        .from("generated_images")
+        .update({ replicate_prediction_id: prediction.id })
+        .eq("id", generation.id);
+
+      console.log(
+        `[generate] Started ${type} for project ${projectId}, prediction ${prediction.id}`
+      );
+
+      return NextResponse.json(
+        {
+          success: true,
+          queueId: queueEntry.id,
+          generationId: generation.id,
+          predictionId: prediction.id,
+        },
+        { status: 202 }
+      );
+    } catch (predictionError) {
+      console.error("[generate] Replicate prediction failed:", predictionError);
+
+      // Refund credits on prediction creation failure
+      await supabase.rpc("add_credits", {
+        p_user_id: user.id,
+        p_amount: cost,
+      });
 
       await supabase
         .from("generated_images")
         .update({ status: "failed" })
         .eq("id", generation.id);
 
-      return NextResponse.json({ error: result?.error || "Generation failed" }, { status: 500 });
+      await supabase
+        .from("generation_queue")
+        .update({
+          status: "failed",
+          error:
+            predictionError instanceof Error
+              ? predictionError.message
+              : "Prediction creation failed",
+          completed_at: new Date().toISOString(),
+        })
+        .eq("id", queueEntry.id);
+
+      return NextResponse.json(
+        { error: "Something went wrong" },
+        { status: 500 }
+      );
     }
-
-    // Store result
-    const outputUrl = Array.isArray(result.output) ? result.output[0] : result.output;
-
-    // Update generation record
-    await supabase
-      .from("generated_images")
-      .update({
-        status: "completed",
-        storage_path: outputUrl || "",
-      })
-      .eq("id", generation.id);
-
-    // Update project counts
-    await supabase
-      .from("projects")
-      .update({
-        generated_image_count: (project.generated_image_count || 0) + 1,
-        status: "completed",
-      })
-      .eq("id", projectId);
-
-    return NextResponse.json({
-      success: true,
-      generationId: generation.id,
-      outputUrl,
-    });
   } catch (error) {
-    console.error("Generation error:", error);
+    console.error("[generate] Unexpected error:", error);
     return NextResponse.json(
-      { error: (error as Error).message },
+      { error: "Something went wrong" },
       { status: 500 }
     );
   }

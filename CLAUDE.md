@@ -122,14 +122,14 @@ Replicate completes (30-90 seconds)
 
 ## Build Phases
 
-### Phase 1: Architecture Fixes ✅ → ☐
-- [ ] Async webhook flow (replace synchronous generation)
-- [ ] Atomic credit deduction
-- [ ] Atomic upload transaction with cleanup
-- [ ] Persistent image storage (download Replicate output to Supabase)
-- [ ] Error message sanitization
-- [ ] Parallel image uploads (Promise.all)
-- [ ] Pipeline step progress (generation_queue.current_step + Realtime)
+### Phase 1: Architecture Fixes ✅
+- [x] Async webhook flow (replace synchronous generation)
+- [x] Atomic credit deduction (deduct_credits RPC)
+- [x] Atomic upload transaction with cleanup
+- [x] Persistent image storage (download Replicate output to Supabase Storage)
+- [x] Error message sanitization (generic messages to client, details logged server-side)
+- [x] Parallel image uploads (Promise.all)
+- [x] Pipeline step progress (generation_queue.current_step + Supabase Realtime)
 
 ### Phase 2: Schema Expansions ✅ → ☐
 - [ ] Migration: credits_expires_at on users
