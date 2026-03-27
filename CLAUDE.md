@@ -163,13 +163,13 @@ Phase 1 merged to main. Rebase clean — no conflicts. Migrations 002 + 003 coex
 - **Phase 5 can run independently** as a fourth session — just ensure the Phase 2 brand_kits and export_presets tables exist (either run the migration or include it in Phase 5 work).
 - **Phase 3 admin monitoring works best** after some generations have been created (Phase 4 polish helps with that flow).
 
-### Phase 4: Core UX Polish ✅ → ☐
-- [ ] Dashboard with shadcn/ui Cards (stats, recent projects)
-- [ ] Credits page "Coming Soon" placeholder
-- [ ] Generation progress UI (step-by-step with Realtime)
-- [ ] Gallery with actual images (not placeholders)
-- [ ] Download individual images + ZIP download
-- [ ] Before/After comparison slider
+### Phase 4: Core UX Polish ✅
+- [x] Dashboard with shadcn/ui Cards (stats, recent projects, thumbnail previews via signed URLs)
+- [x] Credits page "Coming Soon" placeholder (payment buttons disabled, contact CTA)
+- [x] Generation progress UI (step-by-step with Realtime, completion/failure states, toast notifications)
+- [x] Gallery with actual images (signed URLs from Supabase Storage, working lightbox)
+- [x] Download individual images + ZIP download (archiver-based /api/download/[projectId])
+- [x] Before/After comparison slider (drag-to-compare component on product shots)
 
 ### Phase 5: Brand Kit + Social Export ✅ → ☐
 - [ ] Brand Kit settings page (logo upload, color picker, watermark toggle)
@@ -177,11 +177,14 @@ Phase 1 merged to main. Rebase clean — no conflicts. Migrations 002 + 003 coex
 - [ ] Social export presets (crop/resize to platform dimensions)
 - [ ] Export UI on gallery page
 
-### Phase 6: 3D + Embed + AR ✅ → ☐
-- [ ] 3D viewer page with model-viewer
-- [ ] Embed code generator UI
-- [ ] Public embed page
-- [ ] AR Try-On (WebXR) — ring/necklace/earring placement
+### Phase 6: 3D + Embed + AR ✅
+- [x] 3D viewer page with model-viewer (dashboard page with live config controls: bg color, rotation, lighting)
+- [x] Embed code generator UI (iframe snippet dialog with copy-to-clipboard, configurable dimensions)
+- [x] Public embed page (already existed from Phase 1, now wired to configurable embed_configs)
+- [x] AR "View in Your Space" (model-viewer built-in AR with WebXR/Scene Viewer, session tracking, Beta badge)
+- [x] Viewer controls panel (color picker, rotation speed slider, lighting presets)
+- [x] useEmbedConfig hook (fetch/create/update with debounced writes)
+- [x] Project detail 3D tab wired up (View 3D, Get Embed Code, Download GLB all functional)
 
 ### Phase 7: Logging, Rate Limiting, Polish ✅ → ☐
 - [ ] Structured logging on all API routes

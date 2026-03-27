@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import {
   Camera,
   Sparkles,
@@ -10,7 +11,11 @@ import {
   Loader2,
   RotateCcw,
   Code,
+  CheckCircle2,
+  XCircle,
+  SplitSquareHorizontal,
 } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -22,7 +27,12 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { createClient } from "@/lib/supabase/client";
+import { getSignedUrls, downloadImage } from "@/lib/storage";
+import { BeforeAfterSlider } from "@/components/before-after-slider";
+import { EmbedCodeDialog } from "@/components/three-d/embed-code-dialog";
+import { useEmbedConfig } from "@/hooks/use-embed-config";
 import type {
   Project,
   SourceImage,
@@ -38,8 +48,26 @@ export default function ProjectDetailPage() {
   const [sourceImages, setSourceImages] = useState<SourceImage[]>([]);
   const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
   const [activeJobs, setActiveJobs] = useState<GenerationJob[]>([]);
+  const [completedJobs, setCompletedJobs] = useState<string[]>([]);
+  const [failedJobs, setFailedJobs] = useState<GenerationJob[]>([]);
   const [generating, setGenerating] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const [sourceUrls, setSourceUrls] = useState<Record<string, string>>({});
+  const [generatedUrls, setGeneratedUrls] = useState<Record<string, string>>({});
+  const [compareImage, setCompareImage] = useState<GeneratedImage | null>(null);
+  const [embedDialogOpen, setEmbedDialogOpen] = useState(false);
+
+  const { config: embedConfig, ensureConfig } = useEmbedConfig(projectId);
+
+  // Resolve signed URLs for generated images
+  const resolveGeneratedUrls = useCallback(async (images: GeneratedImage[]) => {
+    const completed = images.filter((i) => i.status === "completed" && i.storage_path);
+    if (completed.length === 0) return;
+    const paths = completed.map((i) => i.storage_path);
+    const urls = await getSignedUrls("generated", paths);
+    setGeneratedUrls((prev) => ({ ...prev, ...urls }));
+  }, []);
 
   useEffect(() => {
     const supabase = createClient();
@@ -67,8 +95,17 @@ export default function ProjectDetailPage() {
         ]);
 
       if (projectRes.data) setProject(projectRes.data);
-      if (sourcesRes.data) setSourceImages(sourcesRes.data);
-      if (generatedRes.data) setGeneratedImages(generatedRes.data);
+      if (sourcesRes.data) {
+        setSourceImages(sourcesRes.data);
+        // Resolve source image URLs
+        const paths = sourcesRes.data.map((i) => i.storage_path);
+        const urls = await getSignedUrls("raw-uploads", paths);
+        setSourceUrls(urls);
+      }
+      if (generatedRes.data) {
+        setGeneratedImages(generatedRes.data);
+        await resolveGeneratedUrls(generatedRes.data);
+      }
       if (jobsRes.data) setActiveJobs(jobsRes.data);
       setLoading(false);
     }
@@ -88,14 +125,14 @@ export default function ProjectDetailPage() {
         },
         (payload) => {
           const updated = payload.new as GenerationJob;
-          if (
-            updated.status === "completed" ||
-            updated.status === "failed"
-          ) {
-            // Remove from active jobs
-            setActiveJobs((prev) =>
-              prev.filter((j) => j.id !== updated.id)
-            );
+          if (updated.status === "completed") {
+            // Show completion state briefly before removing
+            setCompletedJobs((prev) => [...prev, updated.id]);
+            toast.success(`${updated.type.replace("_", " ")} generated successfully!`);
+            setTimeout(() => {
+              setActiveJobs((prev) => prev.filter((j) => j.id !== updated.id));
+              setCompletedJobs((prev) => prev.filter((id) => id !== updated.id));
+            }, 2000);
             // Refresh generated images
             supabase
               .from("generated_images")
@@ -103,8 +140,16 @@ export default function ProjectDetailPage() {
               .eq("project_id", projectId)
               .order("created_at", { ascending: false })
               .then(({ data }) => {
-                if (data) setGeneratedImages(data);
+                if (data) {
+                  setGeneratedImages(data);
+                  resolveGeneratedUrls(data);
+                }
               });
+            setGenerating(null);
+          } else if (updated.status === "failed") {
+            setActiveJobs((prev) => prev.filter((j) => j.id !== updated.id));
+            setFailedJobs((prev) => [updated, ...prev]);
+            toast.error(`${updated.type.replace("_", " ")} generation failed`);
             setGenerating(null);
           } else {
             // Update progress
@@ -119,12 +164,12 @@ export default function ProjectDetailPage() {
     return () => {
       supabase.removeChannel(queueChannel);
     };
-  }, [projectId]);
+  }, [projectId, resolveGeneratedUrls]);
 
   const triggerGeneration = async (
     type: "product_shot" | "model_shot" | "3d_model"
   ) => {
-    if (generating) return; // Prevent double-click
+    if (generating) return;
     setGenerating(type);
 
     try {
@@ -137,12 +182,11 @@ export default function ProjectDetailPage() {
       const data = await response.json();
 
       if (!response.ok) {
-        console.error("Generation failed:", data.error);
+        toast.error(data.error || "Generation failed");
         setGenerating(null);
         return;
       }
 
-      // Add optimistic queue entry for immediate feedback
       setActiveJobs((prev) => [
         {
           id: data.queueId,
@@ -160,8 +204,8 @@ export default function ProjectDetailPage() {
         },
         ...prev,
       ]);
-    } catch (error) {
-      console.error("Generation error:", error);
+    } catch {
+      toast.error("Something went wrong");
       setGenerating(null);
     }
   };
@@ -175,6 +219,8 @@ export default function ProjectDetailPage() {
   const models3d = generatedImages.filter(
     (img) => img.type === "3d_model" && img.status === "completed"
   );
+
+  const firstSourceUrl = sourceImages.length > 0 ? sourceUrls[sourceImages[0].storage_path] : null;
 
   if (loading) {
     return (
@@ -213,34 +259,88 @@ export default function ProjectDetailPage() {
             generated
           </p>
         </div>
+        {generatedImages.filter((i) => i.status === "completed").length > 0 && (
+          <Link href={`/gallery/${projectId}`}>
+            <Button variant="outline" className="gap-2">
+              View Gallery
+            </Button>
+          </Link>
+        )}
       </div>
 
       {/* Active Generation Progress */}
       {activeJobs.length > 0 && (
         <div className="space-y-3">
-          {activeJobs.map((job) => (
-            <Card key={job.id} className="border-primary/20 bg-primary/5">
+          {activeJobs.map((job) => {
+            const isCompleted = completedJobs.includes(job.id);
+            return (
+              <Card
+                key={job.id}
+                className={isCompleted
+                  ? "border-green-500/20 bg-green-500/5"
+                  : "border-primary/20 bg-primary/5"
+                }
+              >
+                <CardContent className="py-4">
+                  <div className="flex items-center gap-4">
+                    {isCompleted ? (
+                      <CheckCircle2 className="h-5 w-5 text-green-500" />
+                    ) : (
+                      <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                    )}
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-sm font-medium capitalize">
+                          {job.type.replace("_", " ")}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {isCompleted ? "Complete!" : `Step ${job.current_step}/${job.total_steps}`}
+                        </span>
+                      </div>
+                      <p className="text-sm text-muted-foreground mb-2">
+                        {isCompleted ? "Image ready" : job.current_step_label}
+                      </p>
+                      <Progress
+                        value={isCompleted ? 100 : (job.current_step / job.total_steps) * 100}
+                        className="h-1.5"
+                      />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Failed Jobs */}
+      {failedJobs.length > 0 && (
+        <div className="space-y-3">
+          {failedJobs.map((job) => (
+            <Card key={job.id} className="border-destructive/20 bg-destructive/5">
               <CardContent className="py-4">
                 <div className="flex items-center gap-4">
-                  <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                  <XCircle className="h-5 w-5 text-destructive" />
                   <div className="flex-1">
-                    <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center justify-between">
                       <span className="text-sm font-medium capitalize">
-                        {job.type.replace("_", " ")}
+                        {job.type.replace("_", " ")} — Failed
                       </span>
-                      <span className="text-xs text-muted-foreground">
-                        Step {job.current_step}/{job.total_steps}
-                      </span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="gap-1"
+                        onClick={() => {
+                          setFailedJobs((prev) => prev.filter((j) => j.id !== job.id));
+                          triggerGeneration(job.type as "product_shot" | "model_shot" | "3d_model");
+                        }}
+                      >
+                        <RotateCcw className="h-3 w-3" /> Retry
+                      </Button>
                     </div>
-                    <p className="text-sm text-muted-foreground mb-2">
-                      {job.current_step_label}
-                    </p>
-                    <Progress
-                      value={
-                        (job.current_step / job.total_steps) * 100
-                      }
-                      className="h-1.5"
-                    />
+                    {job.error && (
+                      <p className="text-sm text-muted-foreground mt-1">{job.error}</p>
+                    )}
                   </div>
                 </div>
               </CardContent>
@@ -264,9 +364,18 @@ export default function ProjectDetailPage() {
                 key={img.id}
                 className="aspect-square rounded-lg overflow-hidden border border-border bg-muted"
               >
-                <div className="w-full h-full flex items-center justify-center text-xs text-muted-foreground">
-                  {img.file_name}
-                </div>
+                {sourceUrls[img.storage_path] ? (
+                  <img
+                    src={sourceUrls[img.storage_path]}
+                    alt={img.file_name}
+                    className="w-full h-full object-cover"
+                    loading="lazy"
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-xs text-muted-foreground">
+                    {img.file_name}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -276,7 +385,7 @@ export default function ProjectDetailPage() {
       {/* Generation Actions */}
       <div className="grid gap-4 md:grid-cols-3">
         <Card
-          className="cursor-pointer hover:shadow-md transition-shadow"
+          className={`cursor-pointer hover:shadow-md transition-shadow ${generating === "product_shot" ? "opacity-50 pointer-events-none" : ""}`}
           onClick={() => triggerGeneration("product_shot")}
         >
           <CardContent className="flex items-center gap-4 py-6">
@@ -294,7 +403,7 @@ export default function ProjectDetailPage() {
         </Card>
 
         <Card
-          className="cursor-pointer hover:shadow-md transition-shadow"
+          className={`cursor-pointer hover:shadow-md transition-shadow ${generating === "model_shot" ? "opacity-50 pointer-events-none" : ""}`}
           onClick={() => triggerGeneration("model_shot")}
         >
           <CardContent className="flex items-center gap-4 py-6">
@@ -312,7 +421,7 @@ export default function ProjectDetailPage() {
         </Card>
 
         <Card
-          className="cursor-pointer hover:shadow-md transition-shadow"
+          className={`cursor-pointer hover:shadow-md transition-shadow ${generating === "3d_model" ? "opacity-50 pointer-events-none" : ""}`}
           onClick={() => triggerGeneration("3d_model")}
         >
           <CardContent className="flex items-center gap-4 py-6">
@@ -348,23 +457,45 @@ export default function ProjectDetailPage() {
               {productShots.map((img) => (
                 <Card key={img.id} className="overflow-hidden">
                   <div className="aspect-square bg-white flex items-center justify-center border-b">
-                    {img.storage_path ? (
-                      <div className="text-sm text-muted-foreground">
-                        Generated
-                      </div>
+                    {generatedUrls[img.storage_path] ? (
+                      <img
+                        src={generatedUrls[img.storage_path]}
+                        alt="Product shot"
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                      />
                     ) : (
-                      <div className="text-sm text-muted-foreground">
-                        Processing...
-                      </div>
+                      <div className="text-sm text-muted-foreground">Loading...</div>
                     )}
                   </div>
                   <CardContent className="p-3 flex items-center justify-between">
                     <Badge variant="default">Completed</Badge>
                     <div className="flex gap-1">
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
+                      {firstSourceUrl && generatedUrls[img.storage_path] && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          title="Compare"
+                          onClick={() => setCompareImage(img)}
+                        >
+                          <SplitSquareHorizontal className="h-4 w-4" />
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => downloadImage("generated", img.storage_path, `product-shot-${img.id.slice(0, 8)}.png`)}
+                      >
                         <Download className="h-4 w-4" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => triggerGeneration("product_shot")}
+                      >
                         <RotateCcw className="h-4 w-4" />
                       </Button>
                     </div>
@@ -379,15 +510,27 @@ export default function ProjectDetailPage() {
               {modelShots.map((img) => (
                 <Card key={img.id} className="overflow-hidden">
                   <div className="aspect-[3/4] bg-muted flex items-center justify-center border-b">
-                    <div className="text-sm text-muted-foreground">
-                      {img.model_placement} shot
-                    </div>
+                    {generatedUrls[img.storage_path] ? (
+                      <img
+                        src={generatedUrls[img.storage_path]}
+                        alt={`${img.model_placement} shot`}
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <div className="text-sm text-muted-foreground">Loading...</div>
+                    )}
                   </div>
                   <CardContent className="p-3 flex items-center justify-between">
                     <Badge variant="default" className="capitalize">
                       {img.model_placement}
                     </Badge>
-                    <Button variant="ghost" size="icon" className="h-8 w-8">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => downloadImage("generated", img.storage_path, `model-shot-${img.id.slice(0, 8)}.png`)}
+                    >
                       <Download className="h-4 w-4" />
                     </Button>
                   </CardContent>
@@ -406,13 +549,29 @@ export default function ProjectDetailPage() {
                     Your interactive 3D model has been generated
                   </p>
                   <div className="flex items-center justify-center gap-3">
-                    <Button variant="outline" className="gap-2">
-                      <Box className="h-4 w-4" /> View 3D
-                    </Button>
-                    <Button variant="outline" className="gap-2">
+                    <Link href={`/project/${projectId}/3d`}>
+                      <Button variant="outline" className="gap-2">
+                        <Box className="h-4 w-4" /> View 3D
+                      </Button>
+                    </Link>
+                    <Button
+                      variant="outline"
+                      className="gap-2"
+                      onClick={async () => {
+                        await ensureConfig();
+                        setEmbedDialogOpen(true);
+                      }}
+                    >
                       <Code className="h-4 w-4" /> Get Embed Code
                     </Button>
-                    <Button variant="outline" className="gap-2">
+                    <Button
+                      variant="outline"
+                      className="gap-2"
+                      onClick={() => {
+                        const model = models3d[0];
+                        if (model) downloadImage("3d-models", model.storage_path, `3d-model-${model.id.slice(0, 8)}.glb`);
+                      }}
+                    >
                       <Download className="h-4 w-4" /> Download GLB
                     </Button>
                   </div>
@@ -429,6 +588,29 @@ export default function ProjectDetailPage() {
           </TabsContent>
         </Tabs>
       )}
+
+      {/* Before/After Comparison Dialog */}
+      <Dialog open={!!compareImage} onOpenChange={() => setCompareImage(null)}>
+        <DialogContent className="max-w-3xl p-6">
+          {compareImage && firstSourceUrl && generatedUrls[compareImage.storage_path] && (
+            <div className="space-y-4">
+              <h3 className="font-semibold">Before / After Comparison</h3>
+              <BeforeAfterSlider
+                beforeSrc={firstSourceUrl}
+                afterSrc={generatedUrls[compareImage.storage_path]}
+                className="rounded-lg overflow-hidden"
+              />
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Embed Code Dialog */}
+      <EmbedCodeDialog
+        open={embedDialogOpen}
+        onOpenChange={setEmbedDialogOpen}
+        publicToken={embedConfig?.public_token ?? null}
+      />
     </div>
   );
 }
