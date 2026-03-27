@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { FolderPlus, Images, CreditCard, Sparkles, ArrowRight } from "lucide-react";
+import { FolderPlus, Images, CreditCard, Sparkles, ArrowRight, AlertCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -15,55 +15,61 @@ export default function DashboardPage() {
   const [credits, setCredits] = useState(0);
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadData() {
-      const supabase = createClient();
+      try {
+        const supabase = createClient();
 
-      // Load projects
-      const { data: projectData } = await supabase
-        .from("projects")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(10);
+        // Load projects
+        const { data: projectData, error: projectError } = await supabase
+          .from("projects")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .limit(10);
 
-      if (projectData) setProjects(projectData);
+        if (projectError) throw projectError;
+        if (projectData) setProjects(projectData);
 
-      // Load user credits
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data: userData } = await supabase
-          .from("users")
-          .select("credits_remaining")
-          .eq("id", user.id)
-          .single();
-        if (userData) setCredits(userData.credits_remaining);
-      }
-
-      // Load first source image for each project as thumbnail
-      if (projectData && projectData.length > 0) {
-        const projectIds = projectData.map((p) => p.id);
-        const { data: sourceImages } = await supabase
-          .from("source_images")
-          .select("project_id, storage_path")
-          .in("project_id", projectIds)
-          .eq("order", 0);
-
-        if (sourceImages && sourceImages.length > 0) {
-          const paths = sourceImages.map((img) => img.storage_path);
-          const urls = await getSignedUrls("raw-uploads", paths);
-
-          const thumbMap: Record<string, string> = {};
-          for (const img of sourceImages) {
-            if (urls[img.storage_path]) {
-              thumbMap[img.project_id] = urls[img.storage_path];
-            }
-          }
-          setThumbnails(thumbMap);
+        // Load user credits
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const { data: userData } = await supabase
+            .from("users")
+            .select("credits_remaining")
+            .eq("id", user.id)
+            .single();
+          if (userData) setCredits(userData.credits_remaining);
         }
-      }
 
-      setLoading(false);
+        // Load first source image for each project as thumbnail
+        if (projectData && projectData.length > 0) {
+          const projectIds = projectData.map((p) => p.id);
+          const { data: sourceImages } = await supabase
+            .from("source_images")
+            .select("project_id, storage_path")
+            .in("project_id", projectIds)
+            .eq("order", 0);
+
+          if (sourceImages && sourceImages.length > 0) {
+            const paths = sourceImages.map((img) => img.storage_path);
+            const urls = await getSignedUrls("raw-uploads", paths);
+
+            const thumbMap: Record<string, string> = {};
+            for (const img of sourceImages) {
+              if (urls[img.storage_path]) {
+                thumbMap[img.project_id] = urls[img.storage_path];
+              }
+            }
+            setThumbnails(thumbMap);
+          }
+        }
+      } catch (err) {
+        setError("Failed to load dashboard data. Please try refreshing the page.");
+      } finally {
+        setLoading(false);
+      }
     }
     loadData();
   }, []);
@@ -80,6 +86,19 @@ export default function DashboardPage() {
     return (
       <div className="flex items-center justify-center py-24">
         <div className="animate-pulse text-muted-foreground">Loading...</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 gap-4">
+        <AlertCircle className="h-12 w-12 text-destructive/50" />
+        <p className="text-muted-foreground text-center max-w-sm">{error}</p>
+        <Button variant="outline" className="gap-2" onClick={() => window.location.reload()}>
+          <RefreshCw className="h-4 w-4" />
+          Refresh
+        </Button>
       </div>
     );
   }

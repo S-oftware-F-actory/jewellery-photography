@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createPrediction, MODELS } from "@/lib/replicate";
+import { createLogger } from "@/lib/logging";
+import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import type { GenerationType, JewelleryType, ModelPlacement } from "@/types/database";
+
+const log = createLogger("/api/generate");
 
 const JEWELLERY_PLACEMENTS: Record<JewelleryType, ModelPlacement[]> = {
   ring: ["finger", "hand"],
@@ -57,7 +61,27 @@ export async function POST(request: NextRequest) {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) {
+      log.warn("Unauthorized request");
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const userLog = log.withContext({ userId: user.id });
+
+    // Rate limit check
+    const rl = checkRateLimit(`generate:${user.id}`, RATE_LIMITS.generate);
+    if (!rl.allowed) {
+      userLog.warn("Rate limited", { remaining: rl.remaining, resetAt: rl.resetAt });
+      return NextResponse.json(
+        { error: "Too many requests. Please wait a moment." },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)),
+            "X-RateLimit-Limit": String(rl.limit),
+            "X-RateLimit-Remaining": "0",
+          },
+        }
+      );
     }
 
     const body = await request.json();
@@ -69,8 +93,11 @@ export async function POST(request: NextRequest) {
     // Validate generation type
     const cost = CREDIT_COSTS[type];
     if (cost === undefined) {
+      userLog.warn("Invalid generation type", { type });
       return NextResponse.json({ error: "Invalid generation type" }, { status: 400 });
     }
+
+    userLog.info("Starting generation", { projectId, type, cost });
 
     // Atomic credit deduction — prevents race conditions
     const { data: deducted, error: deductError } = await supabase.rpc(
@@ -79,6 +106,7 @@ export async function POST(request: NextRequest) {
     );
 
     if (deductError || !deducted) {
+      userLog.warn("Insufficient credits", { cost });
       return NextResponse.json(
         { error: "Insufficient credits" },
         { status: 402 }
@@ -94,7 +122,7 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (!project) {
-      // Refund credits if project not found
+      userLog.warn("Project not found, refunding credits", { projectId, cost });
       await supabase.rpc("add_credits", {
         p_user_id: user.id,
         p_amount: cost,
@@ -111,6 +139,7 @@ export async function POST(request: NextRequest) {
       .limit(1);
 
     if (!sourceImages || sourceImages.length === 0) {
+      userLog.warn("No source images, refunding credits", { projectId, cost });
       await supabase.rpc("add_credits", {
         p_user_id: user.id,
         p_amount: cost,
@@ -124,6 +153,7 @@ export async function POST(request: NextRequest) {
       .createSignedUrl(sourceImages[0].storage_path, 3600);
 
     if (!signedUrl?.signedUrl) {
+      userLog.error("Failed to create signed URL for source image", null, { projectId });
       await supabase.rpc("add_credits", {
         p_user_id: user.id,
         p_amount: cost,
@@ -158,7 +188,7 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (queueError) {
-      console.error("[generate] Queue insert failed:", queueError);
+      userLog.error("Queue insert failed", queueError, { projectId });
       await supabase.rpc("add_credits", {
         p_user_id: user.id,
         p_amount: cost,
@@ -184,7 +214,7 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (genError) {
-      console.error("[generate] Image record insert failed:", genError);
+      userLog.error("Image record insert failed", genError, { projectId });
       await supabase.rpc("add_credits", {
         p_user_id: user.id,
         p_amount: cost,
@@ -249,9 +279,12 @@ export async function POST(request: NextRequest) {
         .update({ replicate_prediction_id: prediction.id })
         .eq("id", generation.id);
 
-      console.log(
-        `[generate] Started ${type} for project ${projectId}, prediction ${prediction.id}`
-      );
+      userLog.info("Generation started", {
+        projectId,
+        type,
+        predictionId: prediction.id,
+        queueId: queueEntry.id,
+      });
 
       return NextResponse.json(
         {
@@ -263,7 +296,7 @@ export async function POST(request: NextRequest) {
         { status: 202 }
       );
     } catch (predictionError) {
-      console.error("[generate] Replicate prediction failed:", predictionError);
+      userLog.error("Replicate prediction failed", predictionError, { projectId, type });
 
       // Refund credits on prediction creation failure
       await supabase.rpc("add_credits", {
@@ -294,7 +327,7 @@ export async function POST(request: NextRequest) {
       );
     }
   } catch (error) {
-    console.error("[generate] Unexpected error:", error);
+    log.error("Unexpected error", error);
     return NextResponse.json(
       { error: "Something went wrong" },
       { status: 500 }

@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { createLogger } from "@/lib/logging";
+import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
+
+const log = createLogger("/api/embed");
 
 // Public endpoint — uses service role to fetch embed config
 export async function GET(
@@ -7,6 +11,20 @@ export async function GET(
   { params }: { params: Promise<{ token: string }> }
 ) {
   const { token } = await params;
+
+  // Rate limit by IP (public endpoint, no auth)
+  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  const rl = checkRateLimit(`embed:${ip}`, RATE_LIMITS.embed);
+  if (!rl.allowed) {
+    log.warn("Rate limited", { ip, token });
+    return NextResponse.json(
+      { error: "Too many requests" },
+      {
+        status: 429,
+        headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) },
+      }
+    );
+  }
 
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -20,6 +38,7 @@ export async function GET(
     .single();
 
   if (!config) {
+    log.warn("Embed config not found", { token });
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
@@ -35,8 +54,11 @@ export async function GET(
     .single();
 
   if (!model3d) {
+    log.warn("No 3D model for embed", { token, projectId: config.project_id });
     return NextResponse.json({ error: "No 3D model available" }, { status: 404 });
   }
+
+  log.info("Embed config served", { token, projectId: config.project_id });
 
   return NextResponse.json({
     modelUrl: model3d.storage_path,

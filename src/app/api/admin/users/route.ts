@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/admin-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { createLogger } from '@/lib/logging';
+
+const log = createLogger('/api/admin/users');
 
 export async function GET(request: NextRequest) {
   try {
     await requireAdmin();
   } catch {
+    log.warn('Unauthorized admin access attempt');
     return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
   }
 
@@ -30,9 +34,11 @@ export async function GET(request: NextRequest) {
   const { data: users, count, error } = await query;
 
   if (error) {
-    console.error('Admin users fetch error:', error);
+    log.error('Users fetch failed', error, { search, page });
     return NextResponse.json({ error: 'Failed to fetch users' }, { status: 500 });
   }
+
+  log.info('Users listed', { search: search || '(none)', page, total: count });
 
   return NextResponse.json({
     users,

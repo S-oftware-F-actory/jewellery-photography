@@ -1,14 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/admin-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { createLogger } from '@/lib/logging';
+
+const log = createLogger('/api/admin/credits');
 
 export async function POST(request: NextRequest) {
   let adminInfo;
   try {
     adminInfo = await requireAdmin();
   } catch {
+    log.warn('Unauthorized admin access attempt');
     return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
   }
+
+  const adminLog = log.withContext({ adminEmail: adminInfo.email });
 
   const body = await request.json();
   const { userId, amount, reason } = body as {
@@ -18,10 +24,12 @@ export async function POST(request: NextRequest) {
   };
 
   if (!userId || amount === undefined || amount === 0) {
+    adminLog.warn('Invalid credit adjustment request', { userId, amount });
     return NextResponse.json({ error: 'userId and non-zero amount are required' }, { status: 400 });
   }
 
   if (!reason?.trim()) {
+    adminLog.warn('Missing reason for credit adjustment', { userId, amount });
     return NextResponse.json({ error: 'Reason is required for audit trail' }, { status: 400 });
   }
 
@@ -35,6 +43,7 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (fetchError || !user) {
+    adminLog.warn('User not found for credit adjustment', { userId });
     return NextResponse.json({ error: 'User not found' }, { status: 404 });
   }
 
@@ -47,7 +56,7 @@ export async function POST(request: NextRequest) {
     .eq('id', userId);
 
   if (updateError) {
-    console.error('Credit adjustment error:', updateError);
+    adminLog.error('Credit update failed', updateError, { userId, amount });
     return NextResponse.json({ error: 'Failed to adjust credits' }, { status: 500 });
   }
 
@@ -57,18 +66,21 @@ export async function POST(request: NextRequest) {
     .insert({
       user_id: userId,
       credits_added: amount,
-      // Use pack_id as null for manual adjustments — stripe_session_id stores audit info
       stripe_session_id: `manual:${adminInfo.email}:${reason}`,
     });
 
   if (logError) {
-    // Non-fatal: log but don't fail the request
-    console.error('Credit audit log error:', logError);
+    adminLog.warn('Audit log insert failed (non-fatal)', { error: logError.message });
   }
 
-  console.log(
-    `[Admin Credit Adjustment] admin=${adminInfo.email} user=${user.email} amount=${amount > 0 ? '+' : ''}${amount} reason="${reason}" new_balance=${newCredits}`
-  );
+  adminLog.info('Credit adjustment completed', {
+    userId,
+    userEmail: user.email,
+    amount,
+    reason,
+    previousCredits: user.credits_remaining,
+    newCredits,
+  });
 
   return NextResponse.json({
     success: true,

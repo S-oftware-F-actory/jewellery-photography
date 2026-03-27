@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/admin-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { createLogger } from '@/lib/logging';
+
+const log = createLogger('/api/admin/generations');
 
 export async function GET(request: NextRequest) {
   try {
     await requireAdmin();
   } catch {
+    log.warn('Unauthorized admin access attempt');
     return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
   }
 
@@ -34,7 +38,7 @@ export async function GET(request: NextRequest) {
   const { data: generations, count, error } = await query;
 
   if (error) {
-    console.error('Admin generations fetch error:', error);
+    log.warn('Generations fetch with joins failed, trying fallback', { error: error.message });
     // Fallback: query without joins if foreign key not set up
     const fallbackQuery = supabase
       .from('generation_queue')
@@ -48,8 +52,11 @@ export async function GET(request: NextRequest) {
     const { data: fallbackData, count: fallbackCount, error: fallbackError } = await fallbackQuery;
 
     if (fallbackError) {
+      log.error('Generations fallback fetch failed', fallbackError, { status, type, page });
       return NextResponse.json({ error: 'Failed to fetch generations' }, { status: 500 });
     }
+
+    log.info('Generations listed (fallback)', { status: status || '(all)', type: type || '(all)', page, total: fallbackCount });
 
     return NextResponse.json({
       generations: fallbackData,
@@ -58,6 +65,8 @@ export async function GET(request: NextRequest) {
       totalPages: Math.ceil((fallbackCount || 0) / limit),
     });
   }
+
+  log.info('Generations listed', { status: status || '(all)', type: type || '(all)', page, total: count });
 
   return NextResponse.json({
     generations,

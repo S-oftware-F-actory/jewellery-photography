@@ -186,12 +186,12 @@ Phase 1 merged to main. Rebase clean — no conflicts. Migrations 002 + 003 coex
 - [x] useEmbedConfig hook (fetch/create/update with debounced writes)
 - [x] Project detail 3D tab wired up (View 3D, Get Embed Code, Download GLB all functional)
 
-### Phase 7: Logging, Rate Limiting, Polish ☐
-- [ ] Structured logging on all API routes
-- [ ] Rate limiting (/api/generate, /api/embed)
-- [ ] Mobile responsive pass
-- [ ] Empty states, error states, loading states
-- [ ] Landing page polish
+### Phase 7: Logging, Rate Limiting, Polish ✅
+- [x] Structured logging on all API routes (`src/lib/logging.ts` — createLogger with route context, child loggers with userId)
+- [x] Rate limiting (`src/lib/rate-limit.ts` — in-memory sliding window: /api/generate 10/min, /api/embed 60/min, /api/download 5/min)
+- [x] Mobile responsive pass (admin link added to mobile nav, conditional on NEXT_PUBLIC_ADMIN_EMAILS)
+- [x] Empty states, error states, loading states (dashboard + gallery error states with refresh CTA, gallery empty state with icon + back-to-project CTA)
+- [x] Landing page polish (already complete from Phase 4)
 
 ## Review Status
 - **CEO Review:** CLEARED (2026-03-27) — 4 expansions accepted

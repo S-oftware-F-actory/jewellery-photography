@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createLogger } from "@/lib/logging";
+import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import archiver from "archiver";
 import { PassThrough } from "stream";
+
+const log = createLogger("/api/download");
 
 export async function GET(
   request: NextRequest,
@@ -13,7 +17,23 @@ export async function GET(
   // Auth check
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
+    log.warn("Unauthorized download attempt", { projectId });
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const userLog = log.withContext({ userId: user.id });
+
+  // Rate limit
+  const rl = checkRateLimit(`download:${user.id}`, RATE_LIMITS.download);
+  if (!rl.allowed) {
+    userLog.warn("Rate limited", { projectId });
+    return NextResponse.json(
+      { error: "Too many download requests. Please wait." },
+      {
+        status: 429,
+        headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) },
+      }
+    );
   }
 
   // Fetch project (RLS ensures ownership)
@@ -24,6 +44,7 @@ export async function GET(
     .single();
 
   if (!project) {
+    userLog.warn("Project not found for download", { projectId });
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
@@ -35,8 +56,11 @@ export async function GET(
     .eq("status", "completed");
 
   if (!images || images.length === 0) {
+    userLog.warn("No images to download", { projectId });
     return NextResponse.json({ error: "No images to download" }, { status: 404 });
   }
+
+  userLog.info("Starting ZIP download", { projectId, imageCount: images.length });
 
   // Create signed URLs for all images
   const paths = images.map((img) => img.storage_path);
@@ -45,6 +69,7 @@ export async function GET(
     .createSignedUrls(paths, 300);
 
   if (!signedUrls) {
+    userLog.error("Failed to generate signed URLs", null, { projectId });
     return NextResponse.json({ error: "Failed to generate download URLs" }, { status: 500 });
   }
 
@@ -61,6 +86,7 @@ export async function GET(
   archive.pipe(passThrough);
 
   // Add each image to ZIP, organized by type
+  let addedCount = 0;
   const typeCounts: Record<string, number> = {};
   for (const img of images) {
     const url = urlMap[img.storage_path];
@@ -77,12 +103,15 @@ export async function GET(
       const fileName = `${folder}/${typeCounts[folder]}.${ext}`;
 
       archive.append(buffer, { name: fileName });
-    } catch {
-      // Skip failed downloads
+      addedCount++;
+    } catch (err) {
+      userLog.warn("Failed to fetch image for ZIP", { imageId: img.id, type: img.type });
     }
   }
 
   archive.finalize();
+
+  userLog.info("ZIP download prepared", { projectId, addedCount, totalImages: images.length });
 
   // Convert Node stream to Web ReadableStream
   const readable = new ReadableStream({

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -10,7 +10,7 @@ import {
   Settings,
   Diamond,
   Menu,
-  X,
+  Shield,
   LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -26,8 +26,23 @@ const navigation = [
 
 export function MobileNav() {
   const [open, setOpen] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
+
+  useEffect(() => {
+    async function checkAdmin() {
+      const adminEmails = process.env.NEXT_PUBLIC_ADMIN_EMAILS?.split(",").map((e) => e.trim()) || [];
+      if (adminEmails.length === 0) return;
+
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user && adminEmails.includes(user.email || "")) {
+        setIsAdmin(true);
+      }
+    }
+    checkAdmin();
+  }, []);
 
   const handleSignOut = async () => {
     const supabase = createClient();
@@ -66,6 +81,23 @@ export function MobileNav() {
                     </Link>
                   </li>
                 ))}
+                {isAdmin && (
+                  <li>
+                    <Link
+                      href="/admin"
+                      onClick={() => setOpen(false)}
+                      className={cn(
+                        "group flex gap-x-3 rounded-lg p-2.5 text-sm font-medium leading-6 transition-colors",
+                        pathname.startsWith("/admin")
+                          ? "bg-destructive text-destructive-foreground"
+                          : "text-destructive hover:bg-destructive/10"
+                      )}
+                    >
+                      <Shield className="h-5 w-5 shrink-0" />
+                      Admin
+                    </Link>
+                  </li>
+                )}
               </ul>
             </nav>
             <div className="border-t border-border p-4">

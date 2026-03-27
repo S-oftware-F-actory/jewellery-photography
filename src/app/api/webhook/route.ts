@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createPrediction, MODELS } from "@/lib/replicate";
+import { createLogger } from "@/lib/logging";
 import type { GenerationType, JewelleryType } from "@/types/database";
+
+const log = createLogger("/api/webhook");
 
 // Pipeline step labels for each generation type
 const STEP_LABELS: Record<GenerationType, string[]> = {
@@ -59,19 +62,23 @@ export async function POST(request: NextRequest) {
     );
 
     if (!queueId || !generationId || !projectId || !type || !userId) {
-      console.error("[webhook] Missing required params");
+      log.warn("Missing required params", {
+        queueId,
+        generationId,
+        projectId,
+        type,
+        userId,
+      });
       return NextResponse.json({ error: "Missing params" }, { status: 400 });
     }
 
+    const webhookLog = log.withContext({ queueId, type, step, userId });
     const supabase = createAdminClient();
     const labels = STEP_LABELS[type];
 
     // Handle failed prediction
     if (status === "failed") {
-      console.error(
-        `[webhook] Prediction failed for queue ${queueId}:`,
-        predictionError
-      );
+      webhookLog.error("Prediction failed", predictionError, { projectId });
 
       await supabase.rpc("add_credits", {
         p_user_id: userId,
@@ -96,14 +103,15 @@ export async function POST(request: NextRequest) {
     }
 
     if (status !== "succeeded") {
-      // Ignore non-terminal statuses
+      // Ignore non-terminal statuses (starting, processing)
+      webhookLog.info("Non-terminal status received", { status });
       return NextResponse.json({ ok: true });
     }
 
     // Extract output URL
     const outputUrl = Array.isArray(output) ? output[0] : output;
     if (!outputUrl) {
-      console.error("[webhook] Empty output for queue", queueId);
+      webhookLog.error("Empty output from AI model", null, { projectId });
 
       await supabase.rpc("add_credits", {
         p_user_id: userId,
@@ -127,9 +135,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    console.log(
-      `[webhook] Step ${step} completed for queue ${queueId}, type ${type}`
-    );
+    webhookLog.info("Step completed", { projectId });
 
     // Determine next action based on type and current step
     const totalSteps = labels.length;
@@ -229,9 +235,11 @@ export async function POST(request: NextRequest) {
         .update({ replicate_prediction_id: prediction.id })
         .eq("id", queueId);
 
-      console.log(
-        `[webhook] Triggered step ${nextStep} for queue ${queueId}, prediction ${prediction.id}`
-      );
+      webhookLog.info("Triggered next step", {
+        nextStep,
+        predictionId: prediction.id,
+        projectId,
+      });
 
       return NextResponse.json({ ok: true });
     }
@@ -249,7 +257,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ ok: true });
   } catch (error) {
-    console.error("[webhook] Unexpected error:", error);
+    log.error("Unexpected error", error);
     return NextResponse.json(
       { error: "Internal error" },
       { status: 500 }
@@ -266,6 +274,8 @@ async function saveOutput(
   type: GenerationType,
   labels: string[]
 ) {
+  const saveLog = log.withContext({ queueId, generationId, type });
+
   // Update progress to final step
   await supabase
     .from("generation_queue")
@@ -296,11 +306,11 @@ async function saveOutput(
       });
 
     if (uploadError) {
-      console.error("[webhook] Storage upload failed:", uploadError);
+      saveLog.error("Storage upload failed", uploadError);
       // Still save the temporary URL as fallback
     }
   } catch (downloadError) {
-    console.error("[webhook] Output download failed:", downloadError);
+    saveLog.error("Output download failed", downloadError);
     // Save the temporary Replicate URL as fallback
   }
 
@@ -343,7 +353,5 @@ async function saveOutput(
     p_project_id: projectId,
   });
 
-  console.log(
-    `[webhook] Saved ${type} output for generation ${generationId} at ${storagePath}`
-  );
+  saveLog.info("Output saved", { storagePath, bucket });
 }
