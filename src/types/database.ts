@@ -99,3 +99,48 @@ export interface EmbedConfig {
   public_token: string;
   created_at: string;
 }
+
+// Phase 2: Schema Expansions
+export type WatermarkPosition = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'center';
+export type ExportPlatform = 'instagram' | 'pinterest' | 'facebook' | 'whatsapp' | 'custom';
+export type ExportFormat = 'png' | 'jpg' | 'webp';
+export type ArSessionStatus = 'started' | 'completed' | 'failed' | 'unsupported';
+
+export interface BrandKit {
+  id: string;
+  user_id: string;
+  logo_path: string | null;
+  primary_color: string;
+  secondary_color: string;
+  watermark_enabled: boolean;
+  watermark_position: WatermarkPosition;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ExportPreset {
+  id: string;
+  user_id: string;
+  platform: ExportPlatform;
+  name: string;
+  width: number;
+  height: number;
+  aspect_ratio: string;
+  format: ExportFormat;
+  created_at: string;
+}
+
+export interface ArSession {
+  id: string;
+  user_id: string;
+  project_id: string;
+  jewellery_type: JewelleryType;
+  placement: ModelPlacement;
+  duration_seconds: number | null;
+  device_info: Record<string, unknown> | null;
+  status: ArSessionStatus;
+  error: string | null;
+  started_at: string;
+  ended_at: string | null;
+  created_at: string;
+}
